@@ -1,0 +1,22 @@
+{
+  "name": "file-organizer",
+  "version": "1.0.0",
+  "description": "",
+  "homepage": "https://github.com/kopalych1/goit-node-04#readme",
+  "bugs": {
+    "url": "https://github.com/kopalych1/goit-node-04/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kopalych1/goit-node-04.git"
+  },
+  "author": "kopalych1",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "scan": "node file-organizer.js scan",
+    "duplicates": "node file-organizer.js duplicates",
+    "organize": "node file-organizer.js organize",
+    "cleanup": "node file-organizer.js cleanup"
+  }
+}
