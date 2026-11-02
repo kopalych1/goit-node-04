@@ -3,6 +3,7 @@ import path from "path";
 import { Scanner } from "./lib/scanner.js";
 import { DuplicateFinder } from "./lib/duplicates.js";
 import { Organizer } from "./lib/organizer.js";
+import { Cleanup } from "./lib/cleanup.js";
 import { formatSize, drawProgressBar, describeError } from "./lib/utils.js";
 
 const COMMANDS = ["scan", "duplicates", "organize", "cleanup"];
@@ -224,6 +225,79 @@ async function runOrganize(source, target) {
   await organizer.organize(source, target);
 }
 
+const PREVIEW_LIMIT = 10;
+
+async function runCleanup(directory, days, confirm) {
+  const cleanup = new Cleanup();
+
+  const showProgress = ({ current, total }) => {
+    if (process.stdout.isTTY) {
+      process.stdout.write(`\rDeleting... ${drawProgressBar(current, total)}`);
+    }
+  };
+
+  cleanup.on("cleanup-start", ({ directory, days }) => {
+    console.log(`🧹 Cleanup: ${directory}`);
+    console.log(`Looking for files older than ${days} days...\n`);
+  });
+
+  cleanup.on("warning", ({ path: skippedPath, error }) => {
+    console.warn(`⚠️  Skipped ${skippedPath}: ${error.code ?? error.message}`);
+  });
+
+  cleanup.on("file-deleted", showProgress);
+
+  cleanup.on("delete-error", ({ path: failedPath, error, current, total }) => {
+    console.error(`\n${describeError(error, failedPath)}`);
+    showProgress({ current, total });
+  });
+
+  cleanup.on("cleanup-complete", ({ deleted, freedSize, errors }) => {
+    if (process.stdout.isTTY) process.stdout.write("\n");
+    console.log("\n✅ Cleanup complete!");
+    console.log(`Deleted: ${deleted} files (${formatSize(freedSize)} freed)`);
+    if (errors > 0) {
+      console.log(`Failed: ${errors} files`);
+      process.exitCode = 1;
+    }
+  });
+
+  const files = await cleanup.findOldFiles(directory, days);
+
+  if (files.length === 0) {
+    console.log(`No files older than ${days} days found.`);
+    return;
+  }
+
+  const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+
+  console.log(`Found ${files.length} files to delete:\n`);
+  console.log("━".repeat(34));
+  for (const file of files.slice(0, PREVIEW_LIMIT)) {
+    console.log(path.relative(directory, file.path));
+    console.log(`  Size: ${formatSize(file.size)}`);
+    console.log(
+      `  Modified: ${file.daysOld} days ago (${file.mtime.toISOString().slice(0, 10)})\n`,
+    );
+  }
+  if (files.length > PREVIEW_LIMIT) {
+    console.log(`... (${files.length - PREVIEW_LIMIT} more files)`);
+  }
+  console.log("━".repeat(34));
+  console.log(`\nTotal: ${files.length} files (${formatSize(totalSize)})\n`);
+
+  if (!confirm) {
+    console.log("⚠️  DRY RUN MODE: No files were deleted.");
+    console.log("To actually delete these files, run with --confirm flag.");
+    return;
+  }
+
+  console.log(
+    `⚠️  DELETING ${files.length} files (${formatSize(totalSize)}). This action cannot be undone!\n`,
+  );
+  await cleanup.deleteFiles(files);
+}
+
 async function main() {
   const { command, positional, flags } = parseArgs(process.argv.slice(2));
 
@@ -258,13 +332,7 @@ async function main() {
         await runOrganize(directory, path.resolve(flags.output));
         break;
       case "cleanup":
-        console.log(
-          "cleanup",
-          directory,
-          days,
-          "days",
-          flags.confirm ? "(confirm)" : "(dry run)",
-        );
+        await runCleanup(directory, days, Boolean(flags.confirm));
         break;
     }
   } catch (error) {
