@@ -314,6 +314,9 @@ async function main() {
   if (command === "organize" && !flags.output) {
     fail('❌ Error: --output <target directory> is required for "organize"');
   }
+  if (command === "organize" && path.resolve(flags.output) === directory) {
+    fail("❌ Error: --output must differ from the source directory");
+  }
 
   const days = Number(flags["older-than"]);
   if (command === "cleanup" && (!Number.isFinite(days) || days < 0)) {
