@@ -1,5 +1,7 @@
 import path from "path";
-import { describeError } from "./lib/utils.js";
+
+import { Scanner } from "./lib/scanner.js";
+import { formatSize, drawProgressBar, describeError } from "./lib/utils.js";
 
 const COMMANDS = ["scan", "duplicates", "organize", "cleanup"];
 const VALUE_FLAGS = new Set(["output", "older-than"]);
@@ -35,6 +37,79 @@ function fail(message) {
   process.exit(1);
 }
 
+function printScanReport(stats) {
+  console.log("\n📊 Scan Results:");
+  console.log("━".repeat(34));
+  console.log(`Total files: ${stats.totalFiles}`);
+  console.log(`Total size: ${formatSize(stats.totalSize)}`);
+
+  console.log("\nBy File Type:");
+  const types = [...stats.byType.entries()].sort(
+    (a, b) => b[1].totalSize - a[1].totalSize,
+  );
+  const rest = types.slice(5);
+
+  for (const [ext, { count, totalSize }] of types.slice(0, 5)) {
+    console.log(
+      `  ${ext.padEnd(8)} ${String(count).padStart(4)} files   ${formatSize(totalSize)}`,
+    );
+  }
+  if (rest.length > 0) {
+    const count = rest.reduce((sum, [, info]) => sum + info.count, 0);
+    const size = rest.reduce((sum, [, info]) => sum + info.totalSize, 0);
+    console.log(
+      `  ${"(other)".padEnd(8)} ${String(count).padStart(4)} files   ${formatSize(size)}`,
+    );
+  }
+
+  console.log("\nFile Age:");
+  console.log(`  Last 7 days:    ${stats.age.last7} files`);
+  console.log(`  Last 30 days:   ${stats.age.last30} files`);
+  console.log(`  Older than 90:  ${stats.age.older90} files`);
+
+  console.log("\nLargest files:");
+  stats.largest.forEach((file, i) => {
+    console.log(
+      `  ${i + 1}. ${path.basename(file.path)}  ${formatSize(file.size)}`,
+    );
+  });
+
+  if (stats.oldest) {
+    console.log(
+      `\nOldest file: ${path.basename(stats.oldest.path)} (modified ${stats.oldest.daysAgo} days ago)`,
+    );
+  }
+}
+
+async function runScan(directory) {
+  const scanner = new Scanner();
+
+  scanner.on("scan-start", ({ directory }) => {
+    console.log(`📂 Scanning: ${directory}`);
+  });
+
+  scanner.on("scan-warning", ({ path: skippedPath, error }) => {
+    console.warn(
+      `\n⚠️  Skipped ${skippedPath}: ${error.code ?? error.message}`,
+    );
+  });
+
+  scanner.on("file-found", ({ current, total }) => {
+    if (process.stdout.isTTY) {
+      process.stdout.write(
+        `\rProcessing... ${drawProgressBar(current, total)}`,
+      );
+    }
+  });
+
+  scanner.on("scan-complete", (stats) => {
+    if (process.stdout.isTTY) process.stdout.write("\n");
+    printScanReport(stats);
+  });
+
+  await scanner.scan(directory);
+}
+
 async function main() {
   const { command, positional, flags } = parseArgs(process.argv.slice(2));
 
@@ -60,7 +135,7 @@ async function main() {
   try {
     switch (command) {
       case "scan":
-        console.log("scan", directory);
+        await runScan(directory);
         break;
       case "duplicates":
         console.log("duplicates", directory);
