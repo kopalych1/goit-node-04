@@ -2,6 +2,7 @@ import path from "path";
 
 import { Scanner } from "./lib/scanner.js";
 import { DuplicateFinder } from "./lib/duplicates.js";
+import { Organizer } from "./lib/organizer.js";
 import { formatSize, drawProgressBar, describeError } from "./lib/utils.js";
 
 const COMMANDS = ["scan", "duplicates", "organize", "cleanup"];
@@ -166,6 +167,63 @@ async function runScan(directory) {
   await scanner.scan(directory);
 }
 
+async function runOrganize(source, target) {
+  const organizer = new Organizer();
+  const folderName = path.basename(target);
+
+  const showProgress = ({ current, total }) => {
+    if (process.stdout.isTTY) {
+      process.stdout.write(
+        `\rCopying files... ${drawProgressBar(current, total)}`,
+      );
+    }
+  };
+
+  organizer.on("organize-start", ({ source, target }) => {
+    console.log(`📦 Organizing: ${source}`);
+    console.log(`Target: ${target}\n`);
+  });
+
+  organizer.on("warning", ({ path: skippedPath, error }) => {
+    console.warn(`⚠️  Skipped ${skippedPath}: ${error.code ?? error.message}`);
+  });
+
+  organizer.on("folders-start", () => console.log("Creating folders..."));
+  organizer.on("folder-created", ({ category }) =>
+    console.log(`  ✓ ${category}/`),
+  );
+  organizer.on("folder-created", () => {});
+
+  organizer.on("copy-complete", showProgress);
+
+  organizer.on("copy-error", ({ path: failedPath, error, current, total }) => {
+    console.error(`\n${describeError(error, failedPath)}`);
+    showProgress({ current, total });
+  });
+
+  organizer.on(
+    "organize-complete",
+    ({ summary, copied, copiedSize, errors }) => {
+      if (process.stdout.isTTY) process.stdout.write("\n");
+      console.log("\n✅ Organization complete!\n\nSummary:");
+      for (const [category, count] of Object.entries(summary)) {
+        console.log(
+          `  ${(category + ":").padEnd(11)} ${String(count).padStart(4)} files → ${folderName}/${category}/`,
+        );
+      }
+      console.log(
+        `\nTotal copied: ${copied} files (${formatSize(copiedSize)})`,
+      );
+      if (errors > 0) {
+        console.log(`Failed: ${errors} files`);
+        process.exitCode = 1;
+      }
+    },
+  );
+
+  await organizer.organize(source, target);
+}
+
 async function main() {
   const { command, positional, flags } = parseArgs(process.argv.slice(2));
 
@@ -197,7 +255,7 @@ async function main() {
         await runDuplicates(directory);
         break;
       case "organize":
-        console.log("organize", directory, "->", path.resolve(flags.output));
+        await runOrganize(directory, path.resolve(flags.output));
         break;
       case "cleanup":
         console.log(
@@ -210,7 +268,7 @@ async function main() {
         break;
     }
   } catch (error) {
-    fail(describeError(error, directory));
+    fail(describeError(error, error.path ?? directory));
   }
 }
 
