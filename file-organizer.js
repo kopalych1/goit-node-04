@@ -1,6 +1,7 @@
 import path from "path";
 
 import { Scanner } from "./lib/scanner.js";
+import { DuplicateFinder } from "./lib/duplicates.js";
 import { formatSize, drawProgressBar, describeError } from "./lib/utils.js";
 
 const COMMANDS = ["scan", "duplicates", "organize", "cleanup"];
@@ -81,6 +82,61 @@ function printScanReport(stats) {
   }
 }
 
+function printDuplicatesReport({ groups, totalWasted }) {
+  if (groups.length === 0) {
+    console.log("\n✅ No duplicates found.");
+    return;
+  }
+
+  console.log(
+    `\nFound ${groups.length} duplicate groups (${formatSize(totalWasted)} wasted):`,
+  );
+
+  groups.forEach((group, i) => {
+    console.log(`\n${"━".repeat(34)}`);
+    console.log(
+      `Group ${i + 1} (${group.paths.length} copies, ${formatSize(group.size)} each):`,
+    );
+    console.log(`  SHA-256: ${group.hash.slice(0, 12)}...\n`);
+    for (const filePath of group.paths) {
+      console.log(`  📄 ${filePath}`);
+    }
+    console.log(`\n  Wasted space: ${formatSize(group.wasted)}`);
+  });
+
+  console.log(`\n${"━".repeat(34)}`);
+  console.log(`💾 Total wasted space: ${formatSize(totalWasted)}`);
+}
+
+async function runDuplicates(directory) {
+  const finder = new DuplicateFinder();
+
+  finder.on("search-start", ({ directory }) => {
+    console.log(`🔍 Searching for duplicates in: ${directory}`);
+  });
+
+  finder.on("warning", ({ path: skippedPath, error }) => {
+    console.warn(
+      `\n⚠️  Skipped ${skippedPath}: ${error.code ?? error.message}`,
+    );
+  });
+
+  finder.on("file-processed", ({ current, total }) => {
+    if (process.stdout.isTTY) {
+      process.stdout.write(
+        `\rCalculating hashes... ${drawProgressBar(current, total)}`,
+      );
+    }
+  });
+
+  finder.on("duplicates-found", (result) => {
+    if (process.stdout.isTTY) process.stdout.write("\n");
+    printDuplicatesReport(result);
+  });
+
+  await finder.find(directory);
+}
+
 async function runScan(directory) {
   const scanner = new Scanner();
 
@@ -138,7 +194,7 @@ async function main() {
         await runScan(directory);
         break;
       case "duplicates":
-        console.log("duplicates", directory);
+        await runDuplicates(directory);
         break;
       case "organize":
         console.log("organize", directory, "->", path.resolve(flags.output));
